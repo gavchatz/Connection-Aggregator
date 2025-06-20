@@ -13,16 +13,25 @@ This script processes Telegram HTML export files to extract specific user messag
 
 ## Requirements
 
-* Python 3.7+
-* `bs4` (`beautifulsoup4`)
-* `telethon`
+(Python 3.7+)
 
-Install dependencies:
+### Python libraries
+*re
+*os
+*json
+*datetime
+*bs4
+*telethon
+
+
+## Installation
+ Windows ...
 
 ```bash
-pip install beautifulsoup4 telethon
+export TG_API_ID=your_api_id
+export TG_API_HASH=your_api_hash
 ```
-
+ 
 ## Usage
 
 1. **Prepare environment variables** (for Telethon session):
