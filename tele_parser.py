@@ -1,142 +1,121 @@
-import re, os, json, datetime
+import re
+import sys
+import json
+import argparse
+from pathlib import Path
 from bs4 import BeautifulSoup
-from telethon import TelegramClient
-from telethon.sessions import StringSession
+from typing import Dict, List
+from loguru import logger
+
+# Remove all previous handlers and configure loguru
+logger.remove()
+
+logger.add(
+    "tele_parser.log",
+    level="INFO",
+    format=(
+        "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+        "{level:<4} | "
+        "{function:<17} | "
+        "{message}"
+    ),
+    rotation="10 MB"
+)
+
+logger.add(
+    sys.stdout,
+    level="INFO",
+    format=(
+        "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+        "{level:<4} | "
+        "{function:<17} | "
+        "{message}"
+    )
+)
 
 
-
-def export_connections(api_id,api_hash):
-    print(api_id,api_hash)
-
-def find_10d_date_msg(directory, sender_name):
+def find_10d_date_msg(directory: Path, sender_name: str) -> Dict[str, str]:
     pairs = dict()
-    for dirpath, _, filenames in os.walk(directory):
-        for filename in filenames:
-            if filename.endswith(".html"):
-                full_path = os.path.join(dirpath, filename)
-                try:
-                    with open(full_path, "r", encoding="utf-8") as f:
-                        soup = BeautifulSoup(f, "html.parser")
-                except (IOError, OSError) as e:
-                    print(f"Error opening file {full_path}: {e}")
-                    continue
+    for html_file in directory.rglob("*.html"):
+        try:
+            with html_file.open("r", encoding="utf-8") as f:
+                soup = BeautifulSoup(f, "html.parser")
+        except Exception as e:
+            logger.warning(f"Could not read {html_file}: {e}")
+            continue
 
-                messages = soup.find_all("div", class_="message")
-                for message in messages:
-                    sender = message.find("div", class_="from_name")
-                    if sender and sender.text.strip() == sender_name:
-                        text_div = message.find("div", class_="text")
-                        text_date = message.find(
-                            "div", class_="pull_right date details"
-                        )
-                        if text_date and text_div:
-                            numbers = re.findall(r"\b\d{10}\b", str(text_div))
-                            date_pattern = r"\b\d{2}\.\d{2}\.\d{4}\b"
-                            msg_date = re.findall(date_pattern, str(text_date))
-                            if numbers and msg_date and len(str(text_div)) > 6:
-                                pairs[numbers[0]] = msg_date[0]
-                print(f"Processed file: {full_path}, pairs count: {len(pairs)}")
+        for message in soup.find_all("div", class_="message"):
+            sender = message.find("div", class_="from_name")
+            if sender and sender.text.strip() == sender_name:
+                text_div = message.find("div", class_="text")
+                text_date = message.find("div", class_="pull_right date details")
+                if text_div and text_date:
+                    numbers = re.findall(r"\b\d{10}\b", str(text_div))
+                    dates = re.findall(r"\b\d{2}\.\d{2}\.\d{4}\b", str(text_date))
+                    if numbers and dates:
+                        pairs[numbers[0]] = dates[0]
+        logger.info(f"Processed: {html_file}, entries: {len(pairs)}")
     return pairs
 
 
-def read_in_list(columnfile):
-    try:
-        with open(columnfile, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        return lines
-    except (IOError, OSError) as e:
-        print(f"Error reading file {columnfile}: {e}")
-        return []
+def get_all_chat_users(directory: Path) -> List[str]:
+    users = set()
+    for html_file in directory.rglob("*.html"):
+        try:
+            with html_file.open("r", encoding="utf-8") as f:
+                soup = BeautifulSoup(f, "html.parser")
+        except Exception as e:
+            logger.warning(f"Could not read {html_file}: {e}")
+            continue
+
+        for message in soup.find_all("div", class_="message"):
+            sender = message.find("div", class_="from_name")
+            if sender:
+                users.add(sender.text.strip())
+
+    logger.info(f"Found {len(users)} unique senders")
+    return sorted(users)
 
 
-def sexy_dict_print(ugly_dict, pretty_dirname):
+def save_dict_tsv(data: Dict[str, str], output_file: Path):
     try:
-        max_key_len = max(len(k) for k in ugly_dict) if ugly_dict else 0
-        with open(pretty_dirname, "w", encoding="utf-8") as f:
-            f.write("{\n")
-            for i, (k, v) in enumerate(ugly_dict.items()):
-                comma = "," if i < len(ugly_dict) - 1 else ""
-                f.write(f'  "{k}"{" " * (max_key_len - len(k))} : {v}{comma}\n')
-            f.write("}\n")
+        with output_file.open("w", encoding="utf-8") as f:
+            f.write("ID\tDate\n")
+            for key, val in data.items():
+                f.write(f"{key}\t{val}\n")
+        logger.info(f"Saved TSV: {output_file}")
     except Exception as e:
-        print(f"Error writing to file {pretty_dirname}: {e}")
+        logger.error(f"Error saving TSV {output_file}: {e}")
 
 
-def excel_tsv_print(ugly_dict, fname):
+def save_dict_json(data: Dict[str, str], output_file: Path):
     try:
-        with open(fname, "w", encoding="utf-8") as f:
-            f.write("10ψήφιος\tΗμερομηνία\n")
-            for k, v in ugly_dict.items():
-                f.write(f"{k}\t{v}\n")
+        with output_file.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved JSON: {output_file}")
     except Exception as e:
-        print(f"Error writing TSV file {fname}: {e}")
+        logger.error(f"Error saving JSON {output_file}: {e}")
 
 
-def read_dict_from_json(json_fname):
-    try:
-        with open(json_fname, encoding="utf-8") as f:
-            new_data = json.load(f)
-        return new_data
-    except FileNotFoundError:
-        print(f"JSON file not found: {json_fname}")
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON in {json_fname}: {e}")
-    except Exception as e:
-        print(f"Error reading JSON file {json_fname}: {e}")
-    return {}
+def export_all_users(directory: Path, output_dir: Path):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    users = get_all_chat_users(directory)
+    for user in users:
+        logger.info(f"Extracting data for user: {user}")
+        data = find_10d_date_msg(directory, user)
+        filename_base = user.replace(" ", "_")
+        save_dict_tsv(data, output_dir / f"{filename_base}.tsv")
+        save_dict_json(data, output_dir / f"{filename_base}.json")
 
 
-def get_all_chat_users(directory):
-    list_of_users = []
-    for dirpath, _, filenames in os.walk(directory):
-        for filename in filenames:
-            if filename.endswith(".html"):
-                full_path = os.path.join(dirpath, filename)
-                try:
-                    with open(full_path, "r", encoding="utf-8") as f:
-                        soup = BeautifulSoup(f, "html.parser")
-                except (IOError, OSError) as e:
-                    print(f"Error opening file {full_path}: {e}")
-                    continue
+def main():
+    parser = argparse.ArgumentParser(description="Parse Telegram HTML exports for 10-digit IDs and dates.")
+    parser.add_argument("--input", type=Path, required=True, help="Directory with Telegram HTML exports")
+    parser.add_argument("--output", type=Path, required=True, help="Directory to save extracted TSV/JSON")
 
-                messages = soup.find_all("div", class_="message")
-                for message in messages:
-                    sender = message.find("div", class_="from_name")
-                    if sender:
-                        sender_text = sender.text.strip()
-                        if sender_text not in list_of_users:
-                            list_of_users.append(sender_text)
-    print(f"Found {len(list_of_users)} senders:")
-    print(list_of_users)
-    return list_of_users
-
-
-def print_user_connection_tsv(connection_export_directory):
-
-    userlist = get_all_chat_users(connection_export_directory)
-    for name in userlist:
-        print(f"Processing user: {name}")
-        connections = find_10d_date_msg(connection_export_directory, name)
-        print(f"Number of entries for {name}: {len(connections)}")
-        excel_tsv_print(connections, name.replace(" ", "_") + ".tsv")
-
-def export_telegram_energopoihseis():
-
-    with TelegramClient(StringSession(), os.getenv("TG_API_ID"), os.getenv("TG_API_HASH")) as client:
-
-        print("✅ Login successful!")
-
-        for dialog in client.iter_dialogs():
-            print(dialog.name)
-
+    args = parser.parse_args()
+    export_all_users(args.input, args.output)
 
 
 if __name__ == "__main__":
-    
-
-    connection_export_directory = os.getcwd()+"/energopoihseiw_export"    
-    
-    export_connections(int(os.getenv("TG_API_ID")),os.getenv("TG_API_HASH"))
-    
-    print_user_connection_tsv(connection_export_directory)
-
+    main()
