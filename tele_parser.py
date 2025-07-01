@@ -52,7 +52,7 @@ def find_10d_date_msg(directory: Path, sender_name: str) -> Dict[str, str]:
                 if text_div and text_date:
                     numbers = re.findall(r"\b\d{10}\b", str(text_div))
                     dates = re.findall(r"\b\d{2}\.\d{2}\.\d{4}\b", str(text_date))
-                    if numbers and dates:
+                    if numbers and dates and len(str(text_div)) > 6:
                         pairs[numbers[0]] = dates[0]
         logger.info(f"Processed: {html_file}, entries: {len(pairs)}")
     return pairs
